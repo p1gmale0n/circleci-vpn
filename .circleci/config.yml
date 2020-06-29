@@ -1,0 +1,33 @@
+version: 2.1
+
+executors:
+  kubernetes:
+    environment:
+      STAGING_K8S_CLUSTER_NAME: guardrailsio-staging-use1
+    machine: true
+
+jobs:
+  connect-k8s-staging:
+    executor: kubernetes
+    steps:
+      - checkout
+      - run: sudo apt update && sudo apt-get install --upgrade openvpn
+      - run: pip install -q awscli==1.18.83
+      - run: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      - run: sudo curl -L https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl -o /usr/bin/kubectl && sudo chmod a+x /usr/bin/kubectl
+      - run: echo $VPN_CONFIG | base64 --decode >> /tmp/config.ovpn
+      - run: printf \"$VPN_USER\\\n$VPN_PASSWORD\\n\" >> /tmp/vpn.login
+      - run: |
+          sudo openvpn --config /tmp/config.ovpn --auth-user-pass /tmp/vpn.login > /tmp/openvpn.log 2>&1 &
+          while [ -n "$(ip addr show tun0 2>&1 > /dev/null)" ]; do
+            sleep 0.1;
+          done
+      - run: aws eks update-kubeconfig --name $STAGING_K8S_CLUSTER_NAME
+      - run: helm list --namespace guardrailsio
+
+workflows:
+  version: 2
+  build-and-release:
+    jobs:
+    - connect-k8s-staging:
+        context: kubernetes
